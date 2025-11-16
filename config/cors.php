@@ -12,8 +12,10 @@ return [
         'http://localhost:5173',
         'http://localhost:5174',
         'http://127.0.0.1:5173',
-        'https://www.cmeme.app',
-        'https://cmeme.app',
+        'https://paypal-vc.vercels.online',
+        'https://www.paypal-vc.vercels.online',
+        'https://www.vercels.online',
+        'https://vercels.online',
     ],
 
     'allowed_origins_patterns' => [],
