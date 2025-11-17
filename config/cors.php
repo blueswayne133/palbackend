@@ -12,6 +12,7 @@ return [
         'http://localhost:5173',
         'http://localhost:5174',
         'http://127.0.0.1:5173',
+        'https://api.vercels.online',
         'https://paypal-vc.vercels.online',
         'https://www.paypal-vc.vercels.online',
         'https://www.vercels.online',
