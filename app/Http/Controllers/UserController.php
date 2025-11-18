@@ -7,12 +7,15 @@ use App\Models\User;
 use App\Models\Transaction;
 use App\Models\BankAccount;
 use App\Models\Contact;
+use App\Models\Card;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 class UserController extends Controller
 {
@@ -30,7 +33,7 @@ class UserController extends Controller
                 'stats' => [
                     'balance' => $user->account_balance,
                     'transactions_count' => $transactionsCount,
-                    'cards_count' => $transactionsCount,
+                    'cards_count' => $user->cards()->where('is_active', true)->count(),
                 ]
             ]
         ]);
@@ -86,14 +89,7 @@ class UserController extends Controller
         ]);
     }
 
-
-
-
-
-
-
-
-       public function sendPayment(Request $request)
+    public function sendPayment(Request $request)
     {
         $validator = Validator::make($request->all(), [
             'receiver_email' => 'required|email|exists:users,email',
@@ -345,5 +341,410 @@ class UserController extends Controller
                 'transactions' => $transactions
             ]
         ]);
+    }
+
+    // Card Management Methods
+
+    public function addCard(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'card_holder_name' => 'required|string|max:255',
+            'card_number' => 'required|string|size:16|regex:/^[0-9]+$/',
+            'expiry_month' => 'required|integer|between:1,12',
+            'expiry_year' => 'required|integer|min:' . date('Y') . '|max:' . (date('Y') + 20),
+            'cvv' => 'required|string|size:3|regex:/^[0-9]+$/'
+        ], [
+            'card_number.size' => 'Card number must be exactly 16 digits',
+            'card_number.regex' => 'Card number must contain only numbers',
+            'cvv.size' => 'CVV must be exactly 3 digits',
+            'cvv.regex' => 'CVV must contain only numbers'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $user = Auth::user();
+
+        // Check if card already exists
+        $lastFour = substr($request->card_number, -4);
+        $existingCard = $user->cards()
+            ->where('last_four', $lastFour)
+            ->where('expiry_month', $request->expiry_month)
+            ->where('expiry_year', $request->expiry_year)
+            ->where('is_active', true)
+            ->first();
+
+        if ($existingCard) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This card is already linked to your account'
+            ], 409);
+        }
+
+        try {
+            $cardType = $this->detectCardType($request->card_number);
+            $cardBrand = $this->detectCardBrand($request->card_number);
+
+            $cardData = [
+                'user_id' => $user->id,
+                'card_holder_name' => $request->card_holder_name,
+                'card_number' => $request->card_number,
+                'expiry_month' => $request->expiry_month,
+                'expiry_year' => $request->expiry_year,
+                'cvv' => $request->cvv,
+                'type' => $cardType,
+                'brand' => $cardBrand,
+                'last_four' => $lastFour,
+                'is_default' => !$user->cards()->where('is_active', true)->exists(),
+                'is_active' => true
+            ];
+
+            $card = Card::create($cardData);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Card added successfully',
+                'data' => [
+                    'card' => [
+                        'id' => $card->id,
+                        'card_holder_name' => $card->card_holder_name,
+                        'brand' => $card->brand,
+                        'last_four' => $card->last_four,
+                        'expiry_month' => $card->expiry_month,
+                        'expiry_year' => $card->expiry_year,
+                        'is_default' => $card->is_default,
+                        'masked_number' => $card->masked_card_number,
+                        'expiry' => $card->expiry
+                    ]
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Add card error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to add card. Please try again.'
+            ], 500);
+        }
+    }
+
+    public function getCards()
+    {
+        $user = Auth::user();
+        $cards = $user->cards()
+            ->active()
+            ->notExpired()
+            ->orderBy('is_default', 'desc')
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'cards' => $cards->map(function($card) {
+                    return [
+                        'id' => $card->id,
+                        'card_holder_name' => $card->card_holder_name,
+                        'brand' => $card->brand,
+                        'last_four' => $card->last_four,
+                        'expiry_month' => $card->expiry_month,
+                        'expiry_year' => $card->expiry_year,
+                        'is_default' => $card->is_default,
+                        'masked_number' => $card->masked_card_number,
+                        'expiry' => $card->expiry,
+                        'is_expired' => $card->isExpired()
+                    ];
+                })
+            ]
+        ]);
+    }
+
+    public function setDefaultCard(Request $request, $cardId)
+    {
+        $user = Auth::user();
+        
+        try {
+            $card = $user->cards()->active()->findOrFail($cardId);
+
+            // Check if card is expired
+            if ($card->isExpired()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Cannot set an expired card as default'
+                ], 400);
+            }
+
+            DB::transaction(function () use ($user, $card) {
+                // Remove default from all cards
+                $user->cards()->update(['is_default' => false]);
+                
+                // Set new default
+                $card->update(['is_default' => true]);
+            });
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Default card updated successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Card not found'
+            ], 404);
+        }
+    }
+
+    public function removeCard($cardId)
+    {
+        $user = Auth::user();
+        
+        try {
+            $card = $user->cards()->active()->findOrFail($cardId);
+
+            DB::transaction(function () use ($user, $card) {
+                $card->update(['is_active' => false, 'is_default' => false]);
+
+                // If this was the default card, set another active card as default
+                if ($card->is_default) {
+                    $newDefault = $user->cards()
+                        ->active()
+                        ->notExpired()
+                        ->first();
+                    
+                    if ($newDefault) {
+                        $newDefault->update(['is_default' => true]);
+                    }
+                }
+            });
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Card removed successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Card not found'
+            ], 404);
+        }
+    }
+
+    public function getCardDetails($cardId)
+    {
+        $user = Auth::user();
+        
+        try {
+            $card = $user->cards()->active()->findOrFail($cardId);
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'card' => [
+                        'id' => $card->id,
+                        'card_holder_name' => $card->card_holder_name,
+                        'brand' => $card->brand,
+                        'last_four' => $card->last_four,
+                        'expiry_month' => $card->expiry_month,
+                        'expiry_year' => $card->expiry_year,
+                        'is_default' => $card->is_default,
+                        'masked_number' => $card->masked_card_number,
+                        'expiry' => $card->expiry,
+                        'is_expired' => $card->isExpired()
+                    ]
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Card not found'
+            ], 404);
+        }
+    }
+
+    // Phone Management Methods
+
+    public function addPhone(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'phone' => 'required|string|max:20|unique:users,phone,' . Auth::id()
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $user = Auth::user();
+
+        try {
+            $user->update([
+                'phone' => $request->phone,
+            ]);
+
+            // // Send OTP for phone verification
+            // $otp = rand(100000, 999999);
+            // // Store OTP in cache for verification
+            // \Illuminate\Support\Facades\Cache::put('phone_verification_' . $user->id, $otp, 600); // 10 minutes
+
+            // // In real app, send SMS with OTP
+            // Log::info("Phone verification OTP for {$user->phone}: {$otp}");
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Phone number added successfully. Please verify with OTP.',
+                'data' => [
+                    'requires_verification' => true
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Add phone error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to add phone number'
+            ], 500);
+        }
+    }
+
+    public function verifyPhone(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'otp' => 'required|string|size:6'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $user = Auth::user();
+        $cachedOtp = \Illuminate\Support\Facades\Cache::get('phone_verification_' . $user->id);
+
+        if (!$cachedOtp || $cachedOtp != $request->otp) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid OTP'
+            ], 400);
+        }
+
+        try {
+            $user->update([
+                'phone_verified_at' => now()
+            ]);
+
+            // Clear OTP from cache
+            \Illuminate\Support\Facades\Cache::forget('phone_verification_' . $user->id);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Phone number verified successfully',
+                'data' => [
+                    'user' => $user->fresh()
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Verify phone error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to verify phone number'
+            ], 500);
+        }
+    }
+
+    public function resendPhoneOtp()
+    {
+        $user = Auth::user();
+
+        if (!$user->phone) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No phone number to verify'
+            ], 400);
+        }
+
+        if ($user->hasVerifiedPhone()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Phone already verified'
+            ], 400);
+        }
+
+        try {
+            $otp = rand(100000, 999999);
+            \Illuminate\Support\Facades\Cache::put('phone_verification_' . $user->id, $otp, 600);
+
+            // In real app, send SMS with OTP
+            Log::info("Resent phone verification OTP for {$user->phone}: {$otp}");
+
+            return response()->json([
+                'success' => true,
+                'message' => 'OTP resent successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Resend OTP error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to resend OTP'
+            ], 500);
+        }
+    }
+
+    // Helper Methods
+
+    private function detectCardType($cardNumber)
+    {
+        $firstDigit = substr($cardNumber, 0, 1);
+        $firstTwoDigits = substr($cardNumber, 0, 2);
+        
+        if ($firstDigit == '4') {
+            return 'visa';
+        } elseif ($firstDigit == '5') {
+            return 'mastercard';
+        } elseif ($firstDigit == '3') {
+            if ($firstTwoDigits == '34' || $firstTwoDigits == '37') {
+                return 'amex';
+            }
+            return 'unknown';
+        } elseif ($firstDigit == '6') {
+            if (substr($cardNumber, 0, 4) == '6011' || 
+                (substr($cardNumber, 0, 6) >= '622126' && substr($cardNumber, 0, 6) <= '622925') ||
+                (substr($cardNumber, 0, 3) >= '644' && substr($cardNumber, 0, 3) <= '649') ||
+                $cardNumber[0] == '65') {
+                return 'discover';
+            }
+            return 'unknown';
+        } else {
+            return 'unknown';
+        }
+    }
+
+    private function detectCardBrand($cardNumber)
+    {
+        $type = $this->detectCardType($cardNumber);
+        
+        $brands = [
+            'visa' => 'Visa',
+            'mastercard' => 'Mastercard',
+            'amex' => 'American Express',
+            'discover' => 'Discover'
+        ];
+        
+        return $brands[$type] ?? 'Credit Card';
     }
 }

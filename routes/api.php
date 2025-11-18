@@ -32,6 +32,17 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/profile', [UserController::class, 'profile']);
         Route::put('/profile', [UserController::class, 'updateProfile']);
         Route::get('/transactions', [UserController::class, 'transactions']);
+
+                // Card management
+        Route::get('/cards', [UserController::class, 'getCards']);
+        Route::post('/cards', [UserController::class, 'addCard']);
+        Route::put('/cards/{cardId}/default', [UserController::class, 'setDefaultCard']);
+        Route::delete('/cards/{cardId}', [UserController::class, 'removeCard']);
+        
+        // Phone management
+        Route::post('/phone', [UserController::class, 'addPhone']);
+        Route::post('/phone/verify', [UserController::class, 'verifyPhone']);
+        Route::post('/phone/resend-otp', [UserController::class, 'resendPhoneOtp']);
     });
 
     Route::prefix('payment')->group(function () {
@@ -48,35 +59,41 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/transactions', [UserController::class, 'getTransactions']);
 });
 
-// Protected admin routes
+
+
+ //Admin routes
 Route::prefix('admin')->group(function () {
-    Route::post('/auth/logout', [AdminController::class, 'logout']);
-    Route::get('/dashboard', [AdminController::class, 'dashboard']);
+    // Auth routes
+    Route::post('/auth/login', [AdminController::class, 'login']);
+    Route::post('/auth/logout', [AdminController::class, 'logout'])->middleware('auth:admin');
+    
+    // Dashboard
+    Route::get('/dashboard', [AdminController::class, 'dashboard'])->middleware('auth:admin');
+    Route::get('/system-stats', [AdminController::class, 'getSystemStats'])->middleware('auth:admin');
     
     // User management
-    Route::get('/users', [AdminController::class, 'getUsers']);
-    Route::get('/users/{id}', [AdminController::class, 'getUser']);
-    Route::post('/users', [AdminController::class, 'createUser']);
-    Route::put('/users/{id}', [AdminController::class, 'updateUser']);
-    Route::delete('/users/{id}', [AdminController::class, 'deleteUser']);
-    Route::post('/users/{id}/credit', [AdminController::class, 'creditAccount']);
-    
-    // User specific data
-    Route::get('/users/{id}/contacts', [AdminController::class, 'getUserContacts']);
-    Route::get('/users/{id}/transactions', [AdminController::class, 'getUserTransactions']);
+    Route::get('/users', [AdminController::class, 'getUsers'])->middleware('auth:admin');
+    Route::post('/users', [AdminController::class, 'createUser'])->middleware('auth:admin');
+    Route::get('/users/{id}', [AdminController::class, 'getUser'])->middleware('auth:admin');
+    Route::put('/users/{id}', [AdminController::class, 'updateUser'])->middleware('auth:admin');
+    Route::delete('/users/{id}', [AdminController::class, 'deleteUser'])->middleware('auth:admin');
+    Route::post('/users/{id}/credit', [AdminController::class, 'creditAccount'])->middleware('auth:admin');
+    Route::post('/users/{id}/debit', [AdminController::class, 'debitAccount'])->middleware('auth:admin');
+    Route::post('/users/{id}/toggle-status', [AdminController::class, 'toggleUserStatus'])->middleware('auth:admin');
+    Route::get('/users/{id}/stats', [AdminController::class, 'getUserStats'])->middleware('auth:admin');
+    Route::get('/users/{id}/contacts', [AdminController::class, 'getUserContacts'])->middleware('auth:admin');
+    Route::get('/users/{id}/transactions', [AdminController::class, 'getUserTransactions'])->middleware('auth:admin');
+    Route::get('/users/export/csv', [AdminController::class, 'exportUsers'])->middleware('auth:admin');
     
     // Transaction management
-    Route::get('/transactions', [AdminTransactionController::class, 'getTransactions']);
-    Route::get('/transactions/{id}', [AdminTransactionController::class, 'getTransaction']);
-    Route::post('/transactions', [AdminTransactionController::class, 'createTransaction']);
-    Route::put('/transactions/{id}', [AdminTransactionController::class, 'updateTransaction']);
-    Route::delete('/transactions/{id}', [AdminTransactionController::class, 'deleteTransaction']);
+    Route::get('/transactions', [AdminController::class, 'getTransactions'])->middleware('auth:admin');
+    Route::get('/transactions/{id}', [AdminController::class, 'getTransaction'])->middleware('auth:admin');
+    Route::put('/transactions/{id}/status', [AdminController::class, 'updateTransactionStatus'])->middleware('auth:admin');
     
-    // Email routes
-    Route::post('/send-email', [AdminController::class, 'sendEmail']);
-    Route::post('/send-bulk-email', [AdminController::class, 'sendBulkEmail']);
+    // Email management
+    Route::post('/send-email', [AdminController::class, 'sendEmail'])->middleware('auth:admin');
+    Route::post('/send-bulk-email', [AdminController::class, 'sendBulkEmail'])->middleware('auth:admin');
 });
-
 // Fallback route
 Route::fallback(function () {
     return response()->json([
