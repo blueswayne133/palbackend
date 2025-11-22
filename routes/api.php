@@ -43,6 +43,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('/phone', [UserController::class, 'addPhone']);
         Route::post('/phone/verify', [UserController::class, 'verifyPhone']);
         Route::post('/phone/resend-otp', [UserController::class, 'resendPhoneOtp']);
+
+            // Withdrawal routes
+    Route::get('/withdrawal-info', [UserController::class, 'getWithdrawalInfo']);
+    Route::post('/withdrawal', [UserController::class, 'requestWithdrawal']);
+    Route::get('/withdrawals', [UserController::class, 'getWithdrawals']);
+    Route::get('/withdrawals/{id}', [UserController::class, 'getWithdrawal']);
     });
 
     Route::prefix('payment')->group(function () {
@@ -93,6 +99,15 @@ Route::prefix('admin')->group(function () {
     // Email management
     Route::post('/send-email', [AdminController::class, 'sendEmail'])->middleware('auth:admin');
     Route::post('/send-bulk-email', [AdminController::class, 'sendBulkEmail'])->middleware('auth:admin');
+
+
+    // Withdrawal management
+Route::get('/withdrawals', [AdminController::class, 'getWithdrawals'])->middleware('auth:admin');
+Route::get('/withdrawals/{id}', [AdminController::class, 'getWithdrawal'])->middleware('auth:admin');
+Route::put('/withdrawals/{id}', [AdminController::class, 'updateWithdrawal'])->middleware('auth:admin');
+Route::put('/withdrawals/{id}/fees', [AdminController::class, 'updateWithdrawalFees'])->middleware('auth:admin');
+Route::delete('/withdrawals/{id}', [AdminController::class, 'deleteWithdrawal'])->middleware('auth:admin');
+Route::get('/withdrawals-stats', [AdminController::class, 'getWithdrawalStats'])->middleware('auth:admin');
 });
 // Fallback route
 Route::fallback(function () {

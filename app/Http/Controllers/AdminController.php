@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Validator;
 use App\Mail\AdminNotification;
+use App\Models\Withdrawal;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -892,4 +893,304 @@ class AdminController extends Controller
             ], 500);
         }
     }
+
+
+
+
+
+    // Add these methods to AdminController.php
+
+public function getWithdrawals(Request $request)
+{
+    try {
+        $search = $request->get('search', '');
+        $status = $request->get('status', '');
+        $method = $request->get('method', '');
+        $perPage = $request->get('per_page', 15);
+
+        $withdrawals = Withdrawal::with(['user'])
+            ->when($search, function($query, $search) {
+                $query->where('reference_id', 'like', "%{$search}%")
+                      ->orWhere('account_holder_name', 'like', "%{$search}%")
+                      ->orWhere('bank_name', 'like', "%{$search}%")
+                      ->orWhereHas('user', function($q) use ($search) {
+                          $q->where('name', 'like', "%{$search}%")
+                            ->orWhere('email', 'like', "%{$search}%");
+                      });
+            })
+            ->when($status, function($query, $status) {
+                $query->where('status', $status);
+            })
+            ->when($method, function($query, $method) {
+                $query->where('method', $method);
+            })
+            ->orderBy('created_at', 'desc')
+            ->paginate($perPage);
+
+        return response()->json([
+            'success' => true,
+            'data' => $withdrawals
+        ]);
+    } catch (\Exception $e) {
+        Log::error('Get withdrawals error: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to fetch withdrawals',
+            'error' => $e->getMessage()
+        ], 500);
+    }
+}
+
+public function getWithdrawal($id)
+{
+    try {
+        $withdrawal = Withdrawal::with(['user'])->find($id);
+
+        if (!$withdrawal) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Withdrawal not found'
+            ], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $withdrawal
+        ]);
+    } catch (\Exception $e) {
+        Log::error('Get withdrawal error: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to fetch withdrawal',
+            'error' => $e->getMessage()
+        ], 500);
+    }
+}
+
+public function updateWithdrawal(Request $request, $id)
+{
+    try {
+        $withdrawal = Withdrawal::find($id);
+
+        if (!$withdrawal) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Withdrawal not found'
+            ], 404);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'status' => 'sometimes|in:pending,processing,completed,failed,cancelled',
+            'amount' => 'sometimes|numeric|min:0.01',
+            'fee' => 'sometimes|numeric|min:0',
+            'clearance_fee' => 'sometimes|numeric|min:0',
+            'admin_notes' => 'nullable|string|max:1000',
+            'bank_name' => 'sometimes|string|max:255',
+            'account_number' => 'sometimes|string|max:50',
+            'account_holder_name' => 'sometimes|string|max:255'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $oldStatus = $withdrawal->status;
+        $updateData = $request->all();
+
+        // If status is changing to completed, update timestamps and net amount
+        if ($request->has('status') && $request->status === 'completed' && $oldStatus !== 'completed') {
+            $updateData['completed_at'] = now();
+            $updateData['admin_id'] = Auth::guard('admin')->id();
+            
+            // Recalculate net amount if fees are updated
+            $amount = $request->has('amount') ? $request->amount : $withdrawal->amount;
+            $fee = $request->has('fee') ? $request->fee : $withdrawal->fee;
+            $clearanceFee = $request->has('clearance_fee') ? $request->clearance_fee : $withdrawal->clearance_fee;
+            
+            $updateData['net_amount'] = $amount - $fee - $clearanceFee;
+        }
+
+        // If status is changing to processing
+        if ($request->has('status') && $request->status === 'processing' && $oldStatus !== 'processing') {
+            $updateData['processed_at'] = now();
+            $updateData['admin_id'] = Auth::guard('admin')->id();
+        }
+
+        $withdrawal->update($updateData);
+
+        // If status changed from pending to failed/cancelled, refund the amount
+        if ($oldStatus === 'pending' && in_array($request->status, ['failed', 'cancelled'])) {
+            $user = $withdrawal->user;
+            $user->increment('account_balance', $withdrawal->amount);
+            
+            // Update related transaction status
+            $transaction = Transaction::where('reference_id', $withdrawal->reference_id)->first();
+            if ($transaction) {
+                $transaction->update(['status' => $request->status]);
+            }
+        }
+
+        // Log the status change
+        Log::info("Withdrawal {$withdrawal->id} status changed from {$oldStatus} to {$withdrawal->status} by admin " . Auth::guard('admin')->id());
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Withdrawal updated successfully',
+            'data' => $withdrawal->fresh()
+        ]);
+    } catch (\Exception $e) {
+        Log::error('Update withdrawal error: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to update withdrawal',
+            'error' => $e->getMessage()
+        ], 500);
+    }
+}
+
+public function updateWithdrawalFees(Request $request, $id)
+{
+    try {
+        $withdrawal = Withdrawal::find($id);
+
+        if (!$withdrawal) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Withdrawal not found'
+            ], 404);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'fee' => 'required|numeric|min:0',
+            'clearance_fee' => 'required|numeric|min:0',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        // Calculate new net amount
+        $netAmount = $withdrawal->amount - $request->fee - $request->clearance_fee;
+
+        if ($netAmount < 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Fees cannot exceed withdrawal amount'
+            ], 422);
+        }
+
+        $withdrawal->update([
+            'fee' => $request->fee,
+            'clearance_fee' => $request->clearance_fee,
+            'net_amount' => $netAmount,
+            'admin_id' => Auth::guard('admin')->id()
+        ]);
+
+        // Update related transaction if exists
+        $transaction = Transaction::where('reference_id', $withdrawal->reference_id)->first();
+        if ($transaction) {
+            $transaction->update([
+                'fee' => $request->fee + $request->clearance_fee,
+                'net_amount' => $netAmount
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Withdrawal fees updated successfully',
+            'data' => $withdrawal->fresh()
+        ]);
+    } catch (\Exception $e) {
+        Log::error('Update withdrawal fees error: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to update withdrawal fees',
+            'error' => $e->getMessage()
+        ], 500);
+    }
+}
+
+public function deleteWithdrawal($id)
+{
+    try {
+        $withdrawal = Withdrawal::find($id);
+
+        if (!$withdrawal) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Withdrawal not found'
+            ], 404);
+        }
+
+        // Only allow deletion of pending withdrawals
+        if ($withdrawal->status !== 'pending') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only pending withdrawals can be deleted'
+            ], 400);
+        }
+
+        // Refund the amount to user
+        $user = $withdrawal->user;
+        $user->increment('account_balance', $withdrawal->amount);
+
+        // Delete related transaction
+        $transaction = Transaction::where('reference_id', $withdrawal->reference_id)->first();
+        if ($transaction) {
+            $transaction->delete();
+        }
+
+        $withdrawal->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Withdrawal deleted successfully'
+        ]);
+    } catch (\Exception $e) {
+        Log::error('Delete withdrawal error: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to delete withdrawal',
+            'error' => $e->getMessage()
+        ], 500);
+    }
+}
+
+public function getWithdrawalStats()
+{
+    try {
+        $stats = [
+            'total_withdrawals' => Withdrawal::count(),
+            'pending_withdrawals' => Withdrawal::where('status', 'pending')->count(),
+            'processing_withdrawals' => Withdrawal::where('status', 'processing')->count(),
+            'completed_withdrawals' => Withdrawal::where('status', 'completed')->count(),
+            'failed_withdrawals' => Withdrawal::where('status', 'failed')->count(),
+            'total_withdrawal_amount' => Withdrawal::sum('amount'),
+            'total_fees' => Withdrawal::sum('fee'),
+            'total_clearance_fees' => Withdrawal::sum('clearance_fee'),
+            'today_withdrawals' => Withdrawal::whereDate('created_at', today())->count(),
+            'today_withdrawal_amount' => Withdrawal::whereDate('created_at', today())->sum('amount')
+        ];
+
+        return response()->json([
+            'success' => true,
+            'data' => $stats
+        ]);
+    } catch (\Exception $e) {
+        Log::error('Get withdrawal stats error: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to fetch withdrawal statistics',
+            'error' => $e->getMessage()
+        ], 500);
+    }
+}
 }

@@ -74,4 +74,10 @@ class User extends Authenticatable
     {
         return $this->hasMany(Transaction::class, 'user_id');
     }
+
+    // Add to User.php model
+public function withdrawals()
+{
+    return $this->hasMany(Withdrawal::class);
+}
 }

@@ -8,6 +8,7 @@ use App\Models\Transaction;
 use App\Models\BankAccount;
 use App\Models\Contact;
 use App\Models\Card;
+use App\Models\Withdrawal;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -592,14 +593,6 @@ class UserController extends Controller
                 'phone' => $request->phone,
             ]);
 
-            // // Send OTP for phone verification
-            // $otp = rand(100000, 999999);
-            // // Store OTP in cache for verification
-            // \Illuminate\Support\Facades\Cache::put('phone_verification_' . $user->id, $otp, 600); // 10 minutes
-
-            // // In real app, send SMS with OTP
-            // Log::info("Phone verification OTP for {$user->phone}: {$otp}");
-
             return response()->json([
                 'success' => true,
                 'message' => 'Phone number added successfully. Please verify with OTP.',
@@ -746,5 +739,204 @@ class UserController extends Controller
         ];
         
         return $brands[$type] ?? 'Credit Card';
+    }
+
+    public function getWithdrawalInfo()
+    {
+        try {
+            $user = Auth::user();
+            
+            // Return empty object since we're collecting bank info with each withdrawal
+            return response()->json([
+                'success' => true,
+                'data' => (object)[]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Get withdrawal info error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch withdrawal information'
+            ], 500);
+        }
+    }
+
+public function requestWithdrawal(Request $request)
+{
+    try {
+        $user = Auth::user();
+        
+        Log::info('Withdrawal request received', [
+            'user_id' => $user->id,
+            'amount' => $request->amount,
+            'method' => $request->method,
+            'data' => $request->all()
+        ]);
+
+        $validator = Validator::make($request->all(), [
+            'amount' => 'required|numeric|min:10|max:' . $user->account_balance,
+            'method' => 'required|in:bank_transfer,paypal,crypto,wire_transfer',
+            'bank_name' => 'required|string|max:255',
+            'account_number' => 'required|string|max:50',
+            'routing_number' => 'nullable|string|max:20',
+            'swift_code' => 'nullable|string|max:11',
+            'iban' => 'nullable|string|max:34',
+            'bank_country' => 'required|string|max:100',
+            'account_holder_name' => 'required|string|max:255'
+        ], [
+            'amount.max' => 'Insufficient balance for withdrawal',
+            'amount.min' => 'Minimum withdrawal amount is $10.00'
+        ]);
+
+        if ($validator->fails()) {
+            Log::error('Withdrawal validation failed', ['errors' => $validator->errors()->toArray()]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        // Calculate fee (1% or minimum $1, plus $25 for wire transfer)
+        $baseFee = max($request->amount * 0.01, 1.00);
+        $fee = $request->method === 'wire_transfer' ? $baseFee + 25 : $baseFee;
+        $netAmount = $request->amount - $fee;
+
+        // Check if user has sufficient balance including fee
+        if ($user->account_balance < $request->amount) {
+            Log::error('Insufficient balance for withdrawal', [
+                'user_balance' => $user->account_balance,
+                'requested_amount' => $request->amount
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Insufficient balance for withdrawal'
+            ], 400);
+        }
+
+        $withdrawal = null;
+
+        DB::beginTransaction();
+        try {
+            // Create withdrawal record
+            $withdrawal = Withdrawal::create([
+                'user_id' => $user->id,
+                'amount' => $request->amount,
+                'fee' => $fee,
+                'net_amount' => $netAmount,
+                'currency' => 'USD',
+                'method' => $request->method,
+                'bank_name' => $request->bank_name,
+                'account_number' => $request->account_number,
+                'routing_number' => $request->routing_number,
+                'swift_code' => $request->swift_code,
+                'iban' => $request->iban,
+                'bank_country' => $request->bank_country,
+                'account_holder_name' => $request->account_holder_name,
+                'status' => 'pending',
+                'reference_id' => 'WD' . Str::upper(Str::random(12))
+            ]);
+
+            // Create transaction record - FIX: Set receiver_id to user_id for withdrawals
+            $transaction = Transaction::create([
+                'user_id' => $user->id,
+                'sender_id' => $user->id,
+                'receiver_id' => $user->id, // Set to user_id for withdrawals (self-transaction)
+                'amount' => $request->amount,
+                'fee' => $fee,
+                'net_amount' => $netAmount,
+                'currency' => 'USD',
+                'type' => 'withdrawal',
+                'status' => 'pending',
+                'description' => 'Withdrawal request - ' . str_replace('_', ' ', $request->method),
+                'reference_id' => $withdrawal->reference_id,
+                'metadata' => [
+                    'withdrawal_id' => $withdrawal->id,
+                    'method' => $request->method,
+                    'bank_name' => $request->bank_name
+                ]
+            ]);
+
+            // Hold the amount (deduct from available balance)
+            $user->decrement('account_balance', $request->amount);
+
+            DB::commit();
+
+            Log::info('Withdrawal created successfully', [
+                'withdrawal_id' => $withdrawal->id,
+                'reference_id' => $withdrawal->reference_id
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Database transaction failed during withdrawal', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            throw $e;
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Withdrawal request submitted successfully. It will be processed within 1-3 business days.',
+            'data' => [
+                'withdrawal' => $withdrawal
+            ]
+        ]);
+    } catch (\Exception $e) {
+        Log::error('Withdrawal request error: ' . $e->getMessage());
+        Log::error('Withdrawal request stack trace: ' . $e->getTraceAsString());
+        
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to process withdrawal request: ' . $e->getMessage()
+        ], 500);
+    }
+}
+
+    public function getWithdrawals()
+    {
+        try {
+            $user = Auth::user();
+            $withdrawals = $user->withdrawals()
+                ->orderBy('created_at', 'desc')
+                ->paginate(20);
+
+            return response()->json([
+                'success' => true,
+                'data' => $withdrawals
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Get withdrawals error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch withdrawals'
+            ], 500);
+        }
+    }
+
+    public function getWithdrawal($id)
+    {
+        try {
+            $user = Auth::user();
+            $withdrawal = $user->withdrawals()->find($id);
+
+            if (!$withdrawal) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Withdrawal not found'
+                ], 404);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $withdrawal
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Get withdrawal error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch withdrawal details'
+            ], 500);
+        }
     }
 }
