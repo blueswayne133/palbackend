@@ -38,6 +38,7 @@ class User extends Authenticatable
         'password' => 'hashed',
         'account_balance' => 'decimal:2',
         'is_active' => 'boolean',
+        'currency' => 'string',
     ];
 
     public function otpVerifications()
@@ -76,8 +77,8 @@ class User extends Authenticatable
     }
 
     // Add to User.php model
-public function withdrawals()
-{
+    public function withdrawals()
+   {
     return $this->hasMany(Withdrawal::class);
-}
+    }
 }

@@ -50,30 +50,30 @@ class UserController extends Controller
         ]);
     }
 
-    public function updateProfile(Request $request)
-    {
-        $user = Auth::user();
+public function updateProfile(Request $request)
+{
+    $user = Auth::user();
 
-        $validated = $request->validate([
-            'name' => 'sometimes|string|max:255',
-            'phone' => 'sometimes|string|max:20',
-            'address' => 'sometimes|string|max:500',
-            'currency' => 'sometimes|string|size:3',
-            'nationality' => 'sometimes|string|max:100',
-            'language' => 'sometimes|string|max:10',
-            'timezone' => 'sometimes|string|max:50',
-        ]);
+    $validated = $request->validate([
+        'name' => 'sometimes|string|max:255',
+        'phone' => 'sometimes|string|max:20',
+        'address' => 'sometimes|string|max:500',
+        'currency' => 'sometimes|string|max:5|in:$,€,£,¥,CA$,A$,CHF,CN¥,₹,S$,HK$,kr,NZ$,MX$,R$,₽,R',
+        'nationality' => 'sometimes|string|max:100',
+        'language' => 'sometimes|string|max:10',
+        'timezone' => 'sometimes|string|max:50',
+    ]);
 
-        $user->update($validated);
+    $user->update($validated);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Profile updated successfully',
-            'data' => [
-                'user' => $user
-            ]
-        ]);
-    }
+    return response()->json([
+        'success' => true,
+        'message' => 'Profile updated successfully',
+        'data' => [
+            'user' => $user
+        ]
+    ]);
+}
 
     public function transactions()
     {
