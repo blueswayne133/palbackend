@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\AdminController;
+use App\Http\Controllers\AdminSettingsController;
 use App\Http\Controllers\AdminTransactionController;
 use Laravel\Sanctum\Http\Controllers\CsrfCookieController;
 
@@ -49,6 +50,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/withdrawal', [UserController::class, 'requestWithdrawal']);
     Route::get('/withdrawals', [UserController::class, 'getWithdrawals']);
     Route::get('/withdrawals/{id}', [UserController::class, 'getWithdrawal']);
+    // In user routes
+Route::get('/clearance-fee', [UserController::class, 'getClearanceFee']);
     });
 
     Route::prefix('payment')->group(function () {
@@ -100,7 +103,16 @@ Route::prefix('admin')->group(function () {
     Route::post('/send-email', [AdminController::class, 'sendEmail'])->middleware('auth:admin');
     Route::post('/send-bulk-email', [AdminController::class, 'sendBulkEmail'])->middleware('auth:admin');
 
+// Settings management
+Route::prefix('/settings')->group(function () {
+    Route::get('/withdrawal', [AdminSettingsController::class, 'getWithdrawalSettings'])->middleware('auth:admin');
+    Route::put('/withdrawal', [AdminSettingsController::class, 'updateWithdrawalSettings'])->middleware('auth:admin');
+    Route::post('/calculate-clearance-fee', [AdminSettingsController::class, 'calculateClearanceFee'])->middleware('auth:admin');
+});
 
+// In api.php - add to admin routes
+Route::get('/clearance-fee', [AdminController::class, 'getClearanceFee'])->middleware('auth:admin');
+Route::put('/clearance-fee', [AdminController::class, 'updateClearanceFee'])->middleware('auth:admin');
     // Withdrawal management
 Route::get('/withdrawals', [AdminController::class, 'getWithdrawals'])->middleware('auth:admin');
 Route::get('/withdrawals/{id}', [AdminController::class, 'getWithdrawal'])->middleware('auth:admin');

@@ -13,8 +13,10 @@ class Withdrawal extends Model
 
     protected $fillable = [
         'user_id',
+        'admin_id',
         'amount',
         'fee',
+        'clearance_fee',
         'net_amount',
         'currency',
         'method',
@@ -35,6 +37,7 @@ class Withdrawal extends Model
     protected $casts = [
         'amount' => 'decimal:2',
         'fee' => 'decimal:2',
+        'clearance_fee' => 'decimal:2',
         'net_amount' => 'decimal:2',
         'processed_at' => 'datetime',
         'completed_at' => 'datetime'
@@ -43,6 +46,11 @@ class Withdrawal extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function admin(): BelongsTo
+    {
+        return $this->belongsTo(Admin::class);
     }
 
     public function scopePending($query)
@@ -70,6 +78,11 @@ class Withdrawal extends Model
         return number_format($this->net_amount, 2);
     }
 
+    public function getTotalFeesAttribute()
+    {
+        return $this->fee + $this->clearance_fee;
+    }
+
     public function isPending()
     {
         return $this->status === 'pending';
@@ -83,5 +96,11 @@ class Withdrawal extends Model
     public function isFailed()
     {
         return $this->status === 'failed';
+    }
+
+    // Calculate net amount including clearance fee
+    public function calculateNetAmount()
+    {
+        return $this->amount - $this->fee - $this->clearance_fee;
     }
 }

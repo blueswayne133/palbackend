@@ -8,6 +8,7 @@ use App\Models\Transaction;
 use App\Models\BankAccount;
 use App\Models\Contact;
 use App\Models\Card;
+use App\Models\SystemSetting;
 use App\Models\Withdrawal;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -760,6 +761,9 @@ public function updateProfile(Request $request)
         }
     }
 
+
+    //  update requestWithdrawal method
+
 public function requestWithdrawal(Request $request)
 {
     try {
@@ -796,12 +800,16 @@ public function requestWithdrawal(Request $request)
             ], 422);
         }
 
-        // Calculate fee (1% or minimum $1, plus $25 for wire transfer)
-        $baseFee = max($request->amount * 0.01, 1.00);
-        $fee = $request->method === 'wire_transfer' ? $baseFee + 25 : $baseFee;
-        $netAmount = $request->amount - $fee;
+        // Calculate base fee (2.9% + $0.30 like PayPal)
+        $baseFee = ($request->amount * 0.029) + 0.30;
+        
+        // Get clearance fee from system settings
+        $clearanceFee = SystemSetting::getValue('withdrawal_clearance_fee', 0);
+        
+        $totalFees = $baseFee + $clearanceFee;
+        $netAmount = $request->amount - $totalFees;
 
-        // Check if user has sufficient balance including fee
+        // Check if user has sufficient balance including all fees
         if ($user->account_balance < $request->amount) {
             Log::error('Insufficient balance for withdrawal', [
                 'user_balance' => $user->account_balance,
@@ -821,7 +829,8 @@ public function requestWithdrawal(Request $request)
             $withdrawal = Withdrawal::create([
                 'user_id' => $user->id,
                 'amount' => $request->amount,
-                'fee' => $fee,
+                'fee' => $baseFee,
+                'clearance_fee' => $clearanceFee,
                 'net_amount' => $netAmount,
                 'currency' => 'USD',
                 'method' => $request->method,
@@ -836,13 +845,13 @@ public function requestWithdrawal(Request $request)
                 'reference_id' => 'WD' . Str::upper(Str::random(12))
             ]);
 
-            // Create transaction record - FIX: Set receiver_id to user_id for withdrawals
+            // Create transaction record
             $transaction = Transaction::create([
                 'user_id' => $user->id,
                 'sender_id' => $user->id,
-                'receiver_id' => $user->id, // Set to user_id for withdrawals (self-transaction)
+                'receiver_id' => $user->id,
                 'amount' => $request->amount,
-                'fee' => $fee,
+                'fee' => $totalFees,
                 'net_amount' => $netAmount,
                 'currency' => 'USD',
                 'type' => 'withdrawal',
@@ -852,7 +861,8 @@ public function requestWithdrawal(Request $request)
                 'metadata' => [
                     'withdrawal_id' => $withdrawal->id,
                     'method' => $request->method,
-                    'bank_name' => $request->bank_name
+                    'bank_name' => $request->bank_name,
+                    'clearance_fee' => $clearanceFee
                 ]
             ]);
 
@@ -863,7 +873,8 @@ public function requestWithdrawal(Request $request)
 
             Log::info('Withdrawal created successfully', [
                 'withdrawal_id' => $withdrawal->id,
-                'reference_id' => $withdrawal->reference_id
+                'reference_id' => $withdrawal->reference_id,
+                'clearance_fee' => $clearanceFee
             ]);
 
         } catch (\Exception $e) {
@@ -879,7 +890,13 @@ public function requestWithdrawal(Request $request)
             'success' => true,
             'message' => 'Withdrawal request submitted successfully. It will be processed within 1-3 business days.',
             'data' => [
-                'withdrawal' => $withdrawal
+                'withdrawal' => $withdrawal,
+                'fees_breakdown' => [
+                    'base_fee' => $baseFee,
+                    'clearance_fee' => $clearanceFee,
+                    'total_fees' => $totalFees,
+                    'net_amount' => $netAmount
+                ]
             ]
         ]);
     } catch (\Exception $e) {
@@ -892,6 +909,139 @@ public function requestWithdrawal(Request $request)
         ], 500);
     }
 }
+
+// public function requestWithdrawal(Request $request)
+// {
+//     try {
+//         $user = Auth::user();
+        
+//         Log::info('Withdrawal request received', [
+//             'user_id' => $user->id,
+//             'amount' => $request->amount,
+//             'method' => $request->method,
+//             'data' => $request->all()
+//         ]);
+
+//         $validator = Validator::make($request->all(), [
+//             'amount' => 'required|numeric|min:10|max:' . $user->account_balance,
+//             'method' => 'required|in:bank_transfer,paypal,crypto,wire_transfer',
+//             'bank_name' => 'required|string|max:255',
+//             'account_number' => 'required|string|max:50',
+//             'routing_number' => 'nullable|string|max:20',
+//             'swift_code' => 'nullable|string|max:11',
+//             'iban' => 'nullable|string|max:34',
+//             'bank_country' => 'required|string|max:100',
+//             'account_holder_name' => 'required|string|max:255'
+//         ], [
+//             'amount.max' => 'Insufficient balance for withdrawal',
+//             'amount.min' => 'Minimum withdrawal amount is $10.00'
+//         ]);
+
+//         if ($validator->fails()) {
+//             Log::error('Withdrawal validation failed', ['errors' => $validator->errors()->toArray()]);
+//             return response()->json([
+//                 'success' => false,
+//                 'message' => 'Validation failed',
+//                 'errors' => $validator->errors()
+//             ], 422);
+//         }
+
+//         // Calculate fee (1% or minimum $1, plus $25 for wire transfer)
+//         $baseFee = max($request->amount * 0.01, 1.00);
+//         $fee = $request->method === 'wire_transfer' ? $baseFee + 25 : $baseFee;
+//         $netAmount = $request->amount - $fee;
+
+//         // Check if user has sufficient balance including fee
+//         if ($user->account_balance < $request->amount) {
+//             Log::error('Insufficient balance for withdrawal', [
+//                 'user_balance' => $user->account_balance,
+//                 'requested_amount' => $request->amount
+//             ]);
+//             return response()->json([
+//                 'success' => false,
+//                 'message' => 'Insufficient balance for withdrawal'
+//             ], 400);
+//         }
+
+//         $withdrawal = null;
+
+//         DB::beginTransaction();
+//         try {
+//             // Create withdrawal record
+//             $withdrawal = Withdrawal::create([
+//                 'user_id' => $user->id,
+//                 'amount' => $request->amount,
+//                 'fee' => $fee,
+//                 'net_amount' => $netAmount,
+//                 'currency' => 'USD',
+//                 'method' => $request->method,
+//                 'bank_name' => $request->bank_name,
+//                 'account_number' => $request->account_number,
+//                 'routing_number' => $request->routing_number,
+//                 'swift_code' => $request->swift_code,
+//                 'iban' => $request->iban,
+//                 'bank_country' => $request->bank_country,
+//                 'account_holder_name' => $request->account_holder_name,
+//                 'status' => 'pending',
+//                 'reference_id' => 'WD' . Str::upper(Str::random(12))
+//             ]);
+
+//             // Create transaction record - FIX: Set receiver_id to user_id for withdrawals
+//             $transaction = Transaction::create([
+//                 'user_id' => $user->id,
+//                 'sender_id' => $user->id,
+//                 'receiver_id' => $user->id, // Set to user_id for withdrawals (self-transaction)
+//                 'amount' => $request->amount,
+//                 'fee' => $fee,
+//                 'net_amount' => $netAmount,
+//                 'currency' => 'USD',
+//                 'type' => 'withdrawal',
+//                 'status' => 'pending',
+//                 'description' => 'Withdrawal request - ' . str_replace('_', ' ', $request->method),
+//                 'reference_id' => $withdrawal->reference_id,
+//                 'metadata' => [
+//                     'withdrawal_id' => $withdrawal->id,
+//                     'method' => $request->method,
+//                     'bank_name' => $request->bank_name
+//                 ]
+//             ]);
+
+//             // Hold the amount (deduct from available balance)
+//             $user->decrement('account_balance', $request->amount);
+
+//             DB::commit();
+
+//             Log::info('Withdrawal created successfully', [
+//                 'withdrawal_id' => $withdrawal->id,
+//                 'reference_id' => $withdrawal->reference_id
+//             ]);
+
+//         } catch (\Exception $e) {
+//             DB::rollBack();
+//             Log::error('Database transaction failed during withdrawal', [
+//                 'error' => $e->getMessage(),
+//                 'trace' => $e->getTraceAsString()
+//             ]);
+//             throw $e;
+//         }
+
+//         return response()->json([
+//             'success' => true,
+//             'message' => 'Withdrawal request submitted successfully. It will be processed within 1-3 business days.',
+//             'data' => [
+//                 'withdrawal' => $withdrawal
+//             ]
+//         ]);
+//     } catch (\Exception $e) {
+//         Log::error('Withdrawal request error: ' . $e->getMessage());
+//         Log::error('Withdrawal request stack trace: ' . $e->getTraceAsString());
+        
+//         return response()->json([
+//             'success' => false,
+//             'message' => 'Failed to process withdrawal request: ' . $e->getMessage()
+//         ], 500);
+//     }
+// }
 
     public function getWithdrawals()
     {
@@ -939,4 +1089,27 @@ public function requestWithdrawal(Request $request)
             ], 500);
         }
     }
+
+
+    // In UserController.php - add this method
+public function getClearanceFee()
+{
+    try {
+        $clearanceFee = SystemSetting::getValue('withdrawal_clearance_fee', '0.00');
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'clearance_fee' => $clearanceFee
+            ]
+        ]);
+
+    } catch (\Exception $e) {
+        Log::error('Get clearance fee error: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to fetch clearance fee'
+        ], 500);
+    }
+}
 }
