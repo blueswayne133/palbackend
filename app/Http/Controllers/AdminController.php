@@ -389,7 +389,7 @@ class AdminController extends Controller
 
             $validator = Validator::make($request->all(), [
                 'amount' => 'required|numeric|min:0.01|max:' . $user->account_balance,
-                'description' => 'required|string|max:500'
+                'description' => 'nullable|string|max:500'
             ]);
 
             if ($validator->fails()) {
@@ -400,26 +400,26 @@ class AdminController extends Controller
                 ], 422);
             }
 
-            // Create debit transaction
-            $transaction = Transaction::create([
-                'user_id' => $user->id,
-                'sender_id' => $user->id,
-                'receiver_id' => null, // System debit
-                'amount' => $request->amount,
-                'fee' => 0,
-                'net_amount' => $request->amount,
-                'currency' => 'USD',
-                'type' => 'admin_debit',
-                'status' => 'completed',
-                'description' => $request->description,
-                'reference_id' => 'ADM' . Str::random(12),
-                'completed_at' => now(),
-                'metadata' => [
-                    'admin_id' => Auth::guard('admin')->id(),
-                    'admin_name' => Auth::guard('admin')->user()->name,
-                    'debit_type' => 'manual'
-                ]
-            ]);
+            // // Create debit transaction
+            // $transaction = Transaction::create([
+            //     'user_id' => $user->id,
+            //     'sender_id' => $user->id,
+            //     'receiver_id' => null, // System debit
+            //     'amount' => $request->amount,
+            //     'fee' => 0,
+            //     'net_amount' => $request->amount,
+            //     'currency' => 'USD',
+            //     'type' => 'admin_debit',
+            //     'status' => 'completed',
+            //     'description' => $request->description,
+            //     'reference_id' => 'ADM' . Str::random(12),
+            //     'completed_at' => now(),
+            //     'metadata' => [
+            //         'admin_id' => Auth::guard('admin')->id(),
+            //         'admin_name' => Auth::guard('admin')->user()->name,
+            //         'debit_type' => 'manual'
+            //     ]
+            // ]);
 
             // Update user balance
             $user->decrement('account_balance', $request->amount);
@@ -429,7 +429,7 @@ class AdminController extends Controller
                 'message' => 'Account debited successfully',
                 'data' => [
                     'user' => $user,
-                    'transaction' => $transaction
+                    
                 ]
             ]);
         } catch (\Exception $e) {
