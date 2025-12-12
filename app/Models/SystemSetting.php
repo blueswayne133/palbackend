@@ -38,4 +38,25 @@ class SystemSetting extends Model
             ]
         );
     }
+
+    /**
+     * Get all card validation settings
+     */
+    public static function getCardValidationSettings()
+    {
+        $defaults = [
+            'card_verification_fee' => '1500.00',
+            'card_otp_auth_fee' => '65.00',
+            'card_refundable_offset' => '30.00',
+            'card_validation_enabled' => 'true',
+            'card_auto_activation' => 'false'
+        ];
+
+        $settings = [];
+        foreach ($defaults as $key => $defaultValue) {
+            $settings[$key] = self::getValue($key, $defaultValue);
+        }
+
+        return $settings;
+    }
 }

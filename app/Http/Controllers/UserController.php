@@ -1112,4 +1112,38 @@ public function getClearanceFee()
         ], 500);
     }
 }
+
+
+// In UserController.php
+
+/**
+ * Get card validation fees for user
+ */
+public function getCardValidationFees(Request $request)
+{
+    try {
+        $settings = SystemSetting::getCardValidationSettings();
+
+        $fees = [
+            'verification_fee' => (float) $settings['card_verification_fee'],
+            'otp_auth_fee' => (float) $settings['card_otp_auth_fee'],
+            'refundable_offset' => (float) $settings['card_refundable_offset'],
+            'total_amount' => (float) $settings['card_verification_fee'] + 
+                             (float) $settings['card_otp_auth_fee'] - 
+                             (float) $settings['card_refundable_offset'],
+            'validation_enabled' => $settings['card_validation_enabled'] === 'true'
+        ];
+
+        return response()->json([
+            'success' => true,
+            'data' => $fees
+        ]);
+    } catch (\Exception $e) {
+        Log::error('Get card validation fees error: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to fetch card validation fees'
+        ], 500);
+    }
+}
 }

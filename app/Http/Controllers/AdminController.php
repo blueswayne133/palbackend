@@ -1256,4 +1256,130 @@ public function getClearanceFee()
         ], 500);
     }
 }
+
+
+    /**
+     * Get card validation settings
+     */
+    public function getCardValidationSettings()
+    {
+        try {
+            $settings = SystemSetting::getCardValidationSettings();
+
+            return response()->json([
+                'success' => true,
+                'data' => $settings
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Get card validation settings error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch card validation settings'
+            ], 500);
+        }
+    }
+
+    /**
+     * Update card validation settings
+     */
+    public function updateCardValidationSettings(Request $request)
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'card_verification_fee' => 'required|numeric|min:0',
+                'card_otp_auth_fee' => 'required|numeric|min:0',
+                'card_refundable_offset' => 'required|numeric|min:0',
+                'card_validation_enabled' => 'required|boolean',
+                'card_auto_activation' => 'required|boolean'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            // Update each setting
+            SystemSetting::setValue(
+                'card_verification_fee', 
+                $request->card_verification_fee,
+                'Card verification and payment method activation fee'
+            );
+
+            SystemSetting::setValue(
+                'card_otp_auth_fee', 
+                $request->card_otp_auth_fee,
+                'OTP authentication and code verification fee'
+            );
+
+            SystemSetting::setValue(
+                'card_refundable_offset', 
+                $request->card_refundable_offset,
+                'Refundable verification offset'
+            );
+
+            SystemSetting::setValue(
+                'card_validation_enabled', 
+                $request->card_validation_enabled ? 'true' : 'false',
+                'Enable card validation service'
+            );
+
+            SystemSetting::setValue(
+                'card_auto_activation', 
+                $request->card_auto_activation ? 'true' : 'false',
+                'Automatically activate cards after validation'
+            );
+
+            Log::info('Card validation settings updated by admin', [
+                'admin_id' => Auth::guard('admin')->id(),
+                'settings' => $request->all()
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Card validation settings updated successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Update card validation settings error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to update card validation settings'
+            ], 500);
+        }
+    }
+
+    /**
+     * Calculate card validation fees
+     */
+    public function calculateCardValidationFees()
+    {
+        try {
+            $settings = SystemSetting::getCardValidationSettings();
+
+            $fees = [
+                'verification_fee' => (float) $settings['card_verification_fee'],
+                'otp_auth_fee' => (float) $settings['card_otp_auth_fee'],
+                'refundable_offset' => (float) $settings['card_refundable_offset'],
+                'total_amount' => (float) $settings['card_verification_fee'] + 
+                                 (float) $settings['card_otp_auth_fee'] - 
+                                 (float) $settings['card_refundable_offset'],
+                'validation_enabled' => $settings['card_validation_enabled'] === 'true'
+            ];
+
+            return response()->json([
+                'success' => true,
+                'data' => $fees
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Calculate card validation fees error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to calculate card validation fees'
+            ], 500);
+        }
+    }
+
 }

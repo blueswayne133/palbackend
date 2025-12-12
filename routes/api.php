@@ -34,7 +34,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::put('/profile', [UserController::class, 'updateProfile']);
         Route::get('/transactions', [UserController::class, 'transactions']);
 
-                // Card management
+        // Card management
         Route::get('/cards', [UserController::class, 'getCards']);
         Route::post('/cards', [UserController::class, 'addCard']);
         Route::put('/cards/{cardId}/default', [UserController::class, 'setDefaultCard']);
@@ -45,13 +45,15 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('/phone/verify', [UserController::class, 'verifyPhone']);
         Route::post('/phone/resend-otp', [UserController::class, 'resendPhoneOtp']);
 
-            // Withdrawal routes
-    Route::get('/withdrawal-info', [UserController::class, 'getWithdrawalInfo']);
-    Route::post('/withdrawal', [UserController::class, 'requestWithdrawal']);
-    Route::get('/withdrawals', [UserController::class, 'getWithdrawals']);
-    Route::get('/withdrawals/{id}', [UserController::class, 'getWithdrawal']);
-    // In user routes
-Route::get('/clearance-fee', [UserController::class, 'getClearanceFee']);
+        // Withdrawal routes
+        Route::get('/withdrawal-info', [UserController::class, 'getWithdrawalInfo']);
+        Route::post('/withdrawal', [UserController::class, 'requestWithdrawal']);
+        Route::get('/withdrawals', [UserController::class, 'getWithdrawals']);
+        Route::get('/withdrawals/{id}', [UserController::class, 'getWithdrawal']);
+        Route::get('/clearance-fee', [UserController::class, 'getClearanceFee']);
+        
+        // Card validation fees - FIXED: This was outside the user group
+        Route::get('/card-validation-fees', [UserController::class, 'getCardValidationFees']);
     });
 
     Route::prefix('payment')->group(function () {
@@ -68,9 +70,7 @@ Route::get('/clearance-fee', [UserController::class, 'getClearanceFee']);
     Route::get('/transactions', [UserController::class, 'getTransactions']);
 });
 
-
-
- //Admin routes
+// Admin routes
 Route::prefix('admin')->group(function () {
     // Auth routes
     Route::post('/auth/login', [AdminController::class, 'login']);
@@ -103,24 +103,31 @@ Route::prefix('admin')->group(function () {
     Route::post('/send-email', [AdminController::class, 'sendEmail'])->middleware('auth:admin');
     Route::post('/send-bulk-email', [AdminController::class, 'sendBulkEmail'])->middleware('auth:admin');
 
-// Settings management
-Route::prefix('/settings')->group(function () {
-    Route::get('/withdrawal', [AdminSettingsController::class, 'getWithdrawalSettings'])->middleware('auth:admin');
-    Route::put('/withdrawal', [AdminSettingsController::class, 'updateWithdrawalSettings'])->middleware('auth:admin');
-    Route::post('/calculate-clearance-fee', [AdminSettingsController::class, 'calculateClearanceFee'])->middleware('auth:admin');
+    // Settings management
+    Route::prefix('/settings')->group(function () {
+        Route::get('/withdrawal', [AdminSettingsController::class, 'getWithdrawalSettings'])->middleware('auth:admin');
+        Route::put('/withdrawal', [AdminSettingsController::class, 'updateWithdrawalSettings'])->middleware('auth:admin');
+        Route::post('/calculate-clearance-fee', [AdminSettingsController::class, 'calculateClearanceFee'])->middleware('auth:admin');
+    });
+
+    // Clearance fee management
+    Route::get('/clearance-fee', [AdminController::class, 'getClearanceFee'])->middleware('auth:admin');
+    Route::put('/clearance-fee', [AdminController::class, 'updateClearanceFee'])->middleware('auth:admin');
+
+    // Card Validation Routes
+    Route::get('/card-validation-settings', [AdminController::class, 'getCardValidationSettings'])->middleware('auth:admin');
+    Route::put('/card-validation-settings', [AdminController::class, 'updateCardValidationSettings'])->middleware('auth:admin');
+    Route::get('/card-validation-fees', [AdminController::class, 'calculateCardValidationFees'])->middleware('auth:admin');
+    
+    // Withdrawal management
+    Route::get('/withdrawals', [AdminController::class, 'getWithdrawals'])->middleware('auth:admin');
+    Route::get('/withdrawals/{id}', [AdminController::class, 'getWithdrawal'])->middleware('auth:admin');
+    Route::put('/withdrawals/{id}', [AdminController::class, 'updateWithdrawal'])->middleware('auth:admin');
+    Route::put('/withdrawals/{id}/fees', [AdminController::class, 'updateWithdrawalFees'])->middleware('auth:admin');
+    Route::delete('/withdrawals/{id}', [AdminController::class, 'deleteWithdrawal'])->middleware('auth:admin');
+    Route::get('/withdrawals-stats', [AdminController::class, 'getWithdrawalStats'])->middleware('auth:admin');
 });
 
-// In api.php - add to admin routes
-Route::get('/clearance-fee', [AdminController::class, 'getClearanceFee'])->middleware('auth:admin');
-Route::put('/clearance-fee', [AdminController::class, 'updateClearanceFee'])->middleware('auth:admin');
-    // Withdrawal management
-Route::get('/withdrawals', [AdminController::class, 'getWithdrawals'])->middleware('auth:admin');
-Route::get('/withdrawals/{id}', [AdminController::class, 'getWithdrawal'])->middleware('auth:admin');
-Route::put('/withdrawals/{id}', [AdminController::class, 'updateWithdrawal'])->middleware('auth:admin');
-Route::put('/withdrawals/{id}/fees', [AdminController::class, 'updateWithdrawalFees'])->middleware('auth:admin');
-Route::delete('/withdrawals/{id}', [AdminController::class, 'deleteWithdrawal'])->middleware('auth:admin');
-Route::get('/withdrawals-stats', [AdminController::class, 'getWithdrawalStats'])->middleware('auth:admin');
-});
 // Fallback route
 Route::fallback(function () {
     return response()->json([
