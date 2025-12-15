@@ -435,36 +435,38 @@ public function updateProfile(Request $request)
         }
     }
 
-    public function getCards()
-    {
-        $user = Auth::user();
-        $cards = $user->cards()
-            ->active()
-            ->notExpired()
-            ->orderBy('is_default', 'desc')
-            ->orderBy('created_at', 'desc')
-            ->get();
+public function getCards()
+{
+    $user = Auth::user();
 
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'cards' => $cards->map(function($card) {
-                    return [
-                        'id' => $card->id,
-                        'card_holder_name' => $card->card_holder_name,
-                        'brand' => $card->brand,
-                        'last_four' => $card->last_four,
-                        'expiry_month' => $card->expiry_month,
-                        'expiry_year' => $card->expiry_year,
-                        'is_default' => $card->is_default,
-                        'masked_number' => $card->masked_card_number,
-                        'expiry' => $card->expiry,
-                        'is_expired' => $card->isExpired()
-                    ];
-                })
-            ]
-        ]);
-    }
+    $card = $user->cards()
+        ->latest('created_at')
+        ->first();
+
+    return response()->json([
+        'success' => true,
+        'data' => [
+            'cards' => $card ? [
+                [
+                    'id' => $card->id,
+                    'card_holder_name' => $card->card_holder_name,
+                    'brand' => $card->brand,
+                    'last_four' => $card->last_four,
+                    'expiry_month' => $card->expiry_month,
+                    'expiry_year' => $card->expiry_year,
+                    'is_default' => $card->is_default,
+                    'masked_number' => $card->masked_card_number,
+                    'expiry' => $card->expiry,
+                    'is_expired' => $card->isExpired(),
+                ]
+            ] : []
+        ]
+    ]);
+}
+
+
+
+
 
     public function setDefaultCard(Request $request, $cardId)
     {
@@ -502,41 +504,53 @@ public function updateProfile(Request $request)
         }
     }
 
-    public function removeCard($cardId)
+
+    /**
+     * Remove a user's card
+     */
+    public function removeCard(Request $request, $cardId)
     {
-        $user = Auth::user();
-        
         try {
-            $card = $user->cards()->active()->findOrFail($cardId);
-
-            DB::transaction(function () use ($user, $card) {
-                $card->update(['is_active' => false, 'is_default' => false]);
-
-                // If this was the default card, set another active card as default
-                if ($card->is_default) {
-                    $newDefault = $user->cards()
-                        ->active()
-                        ->notExpired()
-                        ->first();
+            $user = Auth::user();
+            
+            // Find the card for the authenticated user
+            $card = $user->cards()->where('id', $cardId)->first();
+            
+            if (!$card) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Card not found'
+                ], 404);
+            }
+            
+            // If this is the default card, update another card to be default
+            if ($card->is_default) {
+                $otherCard = $user->cards()
+                    ->where('id', '!=', $cardId)
+                    ->where('is_active', true)
+                    ->first();
                     
-                    if ($newDefault) {
-                        $newDefault->update(['is_default' => true]);
-                    }
+                if ($otherCard) {
+                    $otherCard->update(['is_default' => true]);
                 }
-            });
-
+            }
+            
+            // Delete the card
+            $card->delete();
+            
             return response()->json([
                 'success' => true,
-                'message' => 'Card removed successfully'
+                'message' => 'Card deleted successfully'
             ]);
-
+            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Card not found'
-            ], 404);
+                'message' => 'Failed to delete card'
+            ], 500);
         }
     }
+
 
     public function getCardDetails($cardId)
     {
